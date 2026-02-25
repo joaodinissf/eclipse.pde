@@ -183,7 +183,16 @@ public class TargetEditor extends FormEditor {
 					stream.reset();
 					TargetDefinitionPersistenceHelper.initFromXML(currentTarget, stream);
 					if (!getTarget().isResolved()) {
-						getTargetChangedListener().contentsChanged(getTarget(), this, true, false);
+						PDEPreferencesManager preferences = PDECore.getDefault().getPreferencesManager();
+						String mementoPref = preferences.getString(ICoreConstants.WORKSPACE_TARGET_HANDLE);
+						boolean isActiveTarget = false;
+						try {
+							String editorMemento = getTarget().getHandle().getMemento();
+							isActiveTarget = Objects.equals(editorMemento, mementoPref);
+						} catch (CoreException e) {
+							// If we can't determine, don't resolve
+						}
+						getTargetChangedListener().contentsChanged(getTarget(), this, isActiveTarget, false);
 					}
 				}
 			}
@@ -561,8 +570,18 @@ public class TargetEditor extends FormEditor {
 				fTarget = service.newTarget();
 				throw e;
 			}
-			PlatformUI.getWorkbench().getDisplay().asyncExec(
-					() -> TargetEditor.this.getTargetChangedListener().contentsChanged(fTarget, this, true, false));
+			PlatformUI.getWorkbench().getDisplay().asyncExec(() -> {
+				PDEPreferencesManager preferences = PDECore.getDefault().getPreferencesManager();
+				String mementoPref = preferences.getString(ICoreConstants.WORKSPACE_TARGET_HANDLE);
+				boolean isActiveTarget = false;
+				try {
+					String editorMemento = fTarget.getHandle().getMemento();
+					isActiveTarget = Objects.equals(editorMemento, mementoPref);
+				} catch (CoreException e) {
+					// If we can't determine, don't resolve
+				}
+				TargetEditor.this.getTargetChangedListener().contentsChanged(fTarget, this, isActiveTarget, false);
+			});
 			return fTarget;
 		}
 
