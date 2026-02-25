@@ -96,7 +96,7 @@ public class TargetDefinitionPersistenceHelper {
 	static final String FEATURES = "features"; //$NON-NLS-1$
 	static final String FEATURE = "feature"; //$NON-NLS-1$
 	static final String EXTRA_LOCATIONS = "extraLocations"; //$NON-NLS-1$
-	private static ITargetPlatformService fTargetService;
+	private static volatile ITargetPlatformService fTargetService;
 
 	/**
 	 * Serializes a target definition to xml and writes the xml to the given

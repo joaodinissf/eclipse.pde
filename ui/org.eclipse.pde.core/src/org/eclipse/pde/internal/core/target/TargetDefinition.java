@@ -108,7 +108,7 @@ public class TargetDefinition implements ITargetDefinition {
 	/**
 	 * Status generated when this target was resolved, possibly <code>null</code>
 	 */
-	private IStatus fResolutionStatus;
+	private volatile IStatus fResolutionStatus;
 
 	// implicit dependencies
 	private NameVersionDescriptor[] fImplicit;

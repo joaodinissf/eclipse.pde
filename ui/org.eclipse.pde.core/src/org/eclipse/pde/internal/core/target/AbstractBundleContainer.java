@@ -49,23 +49,24 @@ public abstract class AbstractBundleContainer extends PlatformObject implements 
 	/**
 	 * Resolved bundles or <code>null</code> if unresolved
 	 */
-	protected TargetBundle[] fBundles;
+	protected volatile TargetBundle[] fBundles;
 
 	/**
 	 * List of target features contained in this bundle container or <code>null</code> if unresolved
 	 */
-	protected TargetFeature[] fFeatures;
+	protected volatile TargetFeature[] fFeatures;
 
 	/**
 	 * Status generated when this container was resolved, possibly <code>null</code>
 	 */
-	protected IStatus fResolutionStatus;
+	protected volatile IStatus fResolutionStatus;
 
 	/**
 	 * The Java VM Arguments specified by this bundle container
 	 */
 	private String[] fVMArgs;
 
+	private static final String[] NO_VM_ARGS = new String[0];
 	private static final Map<AbstractBundleContainer, String[]> fVMArgsCache = new ConcurrentHashMap<>();
 
 	/**
@@ -225,7 +226,7 @@ public abstract class AbstractBundleContainer extends PlatformObject implements 
 	public String[] getVMArguments() {
 		String[] cachedArgs = fVMArgsCache.get(this);
 		if (cachedArgs != null) {
-			return cachedArgs;
+			return cachedArgs == NO_VM_ARGS ? null : cachedArgs;
 		}
 		String FWK_ADMIN_EQ = "org.eclipse.equinox.frameworkadmin.equinox"; //$NON-NLS-1$
 		if (fVMArgs == null) {
@@ -260,7 +261,7 @@ public abstract class AbstractBundleContainer extends PlatformObject implements 
 
 		}
 		if (fVMArgs == null || fVMArgs.length == 0) {
-			fVMArgsCache.put(this, null);
+			fVMArgsCache.put(this, NO_VM_ARGS);
 			return null;
 		}
 		fVMArgsCache.put(this, fVMArgs);
