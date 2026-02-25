@@ -109,6 +109,8 @@ public class TargetDefinition implements ITargetDefinition {
 	 */
 	private IStatus fResolutionStatus;
 
+	private volatile boolean fIsResolved = false;
+
 	// implicit dependencies
 	private NameVersionDescriptor[] fImplicit;
 
@@ -307,6 +309,7 @@ public class TargetDefinition implements ITargetDefinition {
 		// Clear the feature model cache as it is based on the bundle container locations
 		fFeatures = null;
 		fOtherBundles = null;
+		fIsResolved = false;
 
 		if (locations != null && locations.length == 0) {
 			locations = null;
@@ -345,6 +348,7 @@ public class TargetDefinition implements ITargetDefinition {
 		// Clear the feature model cache as it is based on the bundle container locations
 		fFeatures = null;
 		fOtherBundles = null;
+		fIsResolved = false;
 		if (location == null) {
 			fFeaturesInLocation.clear();
 		} else {
@@ -363,6 +367,7 @@ public class TargetDefinition implements ITargetDefinition {
 			return fResolutionStatus = Status.OK_STATUS;
 		}
 		fResolutionStatus = null;
+		fIsResolved = false;
 		SubMonitor subMonitor = SubMonitor.convert(monitor, Messages.TargetDefinition_1, targetLocations.length * 100);
 		try {
 			MultiStatus status = new MultiStatus(PDECore.PLUGIN_ID, 0, Messages.TargetDefinition_2);
@@ -409,8 +414,10 @@ public class TargetDefinition implements ITargetDefinition {
 				}
 			}
 			if (status.isOK()) {
+				fIsResolved = true;
 				return fResolutionStatus = Status.OK_STATUS;
 			}
+			fIsResolved = true;
 			return fResolutionStatus = status;
 		} catch (OperationCanceledException e) {
 			return Status.CANCEL_STATUS;
@@ -423,15 +430,7 @@ public class TargetDefinition implements ITargetDefinition {
 
 	@Override
 	public boolean isResolved() {
-		ITargetLocation[] containers = getTargetLocations();
-		if (containers != null) {
-			for (ITargetLocation targetLocation : containers) {
-				if (!targetLocation.isResolved()) {
-					return false;
-				}
-			}
-		}
-		return true;
+		return fIsResolved;
 	}
 
 	@Override
