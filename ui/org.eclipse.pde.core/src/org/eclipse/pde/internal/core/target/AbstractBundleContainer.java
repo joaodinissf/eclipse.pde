@@ -16,7 +16,8 @@ package org.eclipse.pde.internal.core.target;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IProgressMonitor;
@@ -65,7 +66,7 @@ public abstract class AbstractBundleContainer extends PlatformObject implements 
 	 */
 	private String[] fVMArgs;
 
-	private static final HashMap<AbstractBundleContainer, String[]> fVMArgsCache = new HashMap<>();
+	private static final Map<AbstractBundleContainer, String[]> fVMArgsCache = new ConcurrentHashMap<>();
 
 	/**
 	 * Resolves any string substitution variables in the given text returning

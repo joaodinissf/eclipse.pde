@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import javax.xml.parsers.DocumentBuilder;
@@ -118,7 +119,7 @@ public class TargetDefinition implements ITargetDefinition {
 	public static final int MODE_FEATURE = 1;
 
 	// cache of features found for a given location, maps a string path location to a array of IFeatureModels (IFeatureModel[])
-	private static Map<String, TargetFeature[]> fFeaturesInLocation = new HashMap<>();
+	private static Map<String, TargetFeature[]> fFeaturesInLocation = new ConcurrentHashMap<>();
 
 	// internal cache for features.  A target managed by features will contain a set of features as well as a set of plug-ins that don't belong to a feature
 	private TargetFeature[] fFeatures;
