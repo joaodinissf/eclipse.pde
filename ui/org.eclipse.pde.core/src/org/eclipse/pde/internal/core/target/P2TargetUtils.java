@@ -35,6 +35,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 import java.util.stream.Collector;
@@ -1036,21 +1041,71 @@ public class P2TargetUtils {
 		}
 		int work = repos.size() * (forceReload ? 4 : 2);
 		SubMonitor subMonitor = SubMonitor.convert(monitor, work);
-		Set<IRepositoryReference> seen = new HashSet<>();
-		List<IMetadataRepository> result = new ArrayList<>(repos.size());
-		List<IMetadataRepository> additional = new ArrayList<>();
+		Set<IRepositoryReference> seen = ConcurrentHashMap.newKeySet();
+		List<IMetadataRepository> result = new CopyOnWriteArrayList<>();
+		List<IMetadataRepository> additional = new CopyOnWriteArrayList<>();
 		MultiStatus repoStatus = new MultiStatus(PDECore.PLUGIN_ID, 0, Messages.IUBundleContainer_ProblemsLoadingRepositories);
-		for (URI location : repos) {
+		int threadCount = Math.min(repos.size(), Runtime.getRuntime().availableProcessors());
+		if (threadCount > 1) {
+			// Parallel loading — each repo is loaded in its own thread.
+			// Network I/O dominates, so concurrency is a big win for multi-repo targets.
+			ExecutorService executor = Executors.newFixedThreadPool(threadCount, r -> {
+				Thread t = new Thread(r, "P2-Metadata-Loader"); //$NON-NLS-1$
+				t.setDaemon(true);
+				return t;
+			});
 			try {
-				IMetadataRepository repository = metadataRepositoryManager.loadRepository(location, subMonitor.split(1));
-				result.add(repository);
-				if (followRepositoryReferences) {
-					addReferences(repository, additional, seen, metadataRepositoryManager, subMonitor.split(1));
+				List<Future<?>> futures = new ArrayList<>();
+				for (URI location : repos) {
+					futures.add(executor.submit(() -> {
+						try {
+							IMetadataRepository repository = metadataRepositoryManager.loadRepository(location,
+									new NullProgressMonitor());
+							result.add(repository);
+							if (followRepositoryReferences) {
+								addReferences(repository, additional, seen, metadataRepositoryManager,
+										new NullProgressMonitor());
+							}
+						} catch (ProvisionException e) {
+							synchronized (repoStatus) {
+								repoStatus.add(e.getStatus());
+							}
+						}
+					}));
 				}
-			} catch (ProvisionException e) {
-				repoStatus.add(e.getStatus());
+				for (Future<?> future : futures) {
+					try {
+						future.get();
+					} catch (InterruptedException e) {
+						Thread.currentThread().interrupt();
+						throw new CoreException(Status.error(Messages.IUBundleContainer_ProblemsLoadingRepositories, e));
+					} catch (ExecutionException e) {
+						Throwable cause = e.getCause();
+						if (cause instanceof CoreException ce) {
+							throw ce;
+						}
+						throw new CoreException(Status.error(Messages.IUBundleContainer_ProblemsLoadingRepositories, cause));
+					}
+				}
+			} finally {
+				executor.shutdownNow();
+			}
+		} else {
+			// Single repo — no thread pool overhead
+			for (URI location : repos) {
+				try {
+					IMetadataRepository repository = metadataRepositoryManager.loadRepository(location,
+							subMonitor.split(1));
+					result.add(repository);
+					if (followRepositoryReferences) {
+						addReferences(repository, additional, seen, metadataRepositoryManager, subMonitor.split(1));
+					}
+				} catch (ProvisionException e) {
+					repoStatus.add(e.getStatus());
+				}
 			}
 		}
+		subMonitor.setWorkRemaining(forceReload ? repos.size() * 2 : 0);
 		if (result.size() != repos.size()) {
 			throw new CoreException(repoStatus);
 		}
@@ -1063,14 +1118,14 @@ public class P2TargetUtils {
 			List<IMetadataRepository> refreshed = new ArrayList<>();
 			subMonitor.setWorkRemaining(2 * unique.size());
 			IArtifactRepositoryManager artifactRepositoryManager = getArtifactRepositoryManager();
-			metadataRepositoryManager = getRepoManager();
+			IMetadataRepositoryManager refreshMetadataManager = getRepoManager();
 			Collection<URI> existingArtifactRepositories = new LinkedHashSet<>(
 					Arrays.asList(artifactRepositoryManager.getKnownRepositories(IRepositoryManager.REPOSITORIES_ALL)));
 			for (IMetadataRepository metadataRepository : unique) {
 				URI location = metadataRepository.getLocation();
 				if (existing.contains(location)) {
 					try {
-						refreshed.add(metadataRepositoryManager.refreshRepository(location, subMonitor.split(1)));
+						refreshed.add(refreshMetadataManager.refreshRepository(location, subMonitor.split(1)));
 					} catch (ProvisionException e) {
 						ILog.get().warn(NLS.bind(Messages.P2TargetUtils_cant_refresh_metadata, location), e);
 						// if refresh do not work, use the previously loaded
