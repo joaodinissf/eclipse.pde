@@ -216,6 +216,14 @@ public class P2TargetUtils {
 	private IProfile fProfile;
 
 	/**
+	 * Cached result of the last {@link #checkProfile} call, keyed by profile
+	 * timestamp. Avoids repeating the expensive IU comparison when nothing
+	 * has changed.
+	 */
+	private volatile long fProfileCheckTimestamp = -1;
+	private volatile boolean fProfileCheckResult = false;
+
+	/**
 	 * Whether this container must have all required IUs of the selected IUs available and included
 	 * in the target to resolve successfully.  If this option is true, the planner will be used to resolve
 	 * otherwise the slicer is used.  The planner can describe any missing requirements as errors.
@@ -327,6 +335,7 @@ public class P2TargetUtils {
 
 	private synchronized void resetProfile() {
 		fProfile = null;
+		fProfileCheckTimestamp = -1;
 	}
 
 	/**
@@ -536,6 +545,10 @@ public class P2TargetUtils {
 		if (profile == null) {
 			return false;
 		}
+		// fast path: return cached result if profile hasn't changed
+		if (profile.getTimestamp() == fProfileCheckTimestamp) {
+			return fProfileCheckResult;
+		}
 
 		// check if all environments setting is the same
 		boolean all = false;
@@ -597,7 +610,10 @@ public class P2TargetUtils {
 				.collect(Collectors.groupingBy(UnitDeclaration::id,
 						Collectors.mapping(UnitDeclaration::version, Collectors.toSet())));
 
-		return installedIUs.equals(declaredIUs);
+		boolean result = installedIUs.equals(declaredIUs);
+		fProfileCheckTimestamp = profile.getTimestamp();
+		fProfileCheckResult = result;
+		return result;
 	}
 
 	private Stream<IUBundleContainer> iuBundleContainersOf(ITargetDefinition target) {
