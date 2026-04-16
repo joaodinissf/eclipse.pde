@@ -116,11 +116,17 @@ public class LoadTargetDefinitionJob extends WorkspaceJob {
 	@Override
 	public IStatus runInWorkspace(IProgressMonitor monitor) throws CoreException {
 		try {
+			long jobStart = System.currentTimeMillis();
 			SubMonitor subMon = SubMonitor.convert(monitor, Messages.LoadTargetOperation_mainTaskName, 40)
 					.checkCanceled();
 
 			if (!fTarget.isResolved()) {
+				long resolveStart = System.currentTimeMillis();
 				fTarget.resolve(subMon.split(20));
+				if (PDECore.DEBUG_MODEL) {
+					System.out.println("[PERF] LoadTargetDefinitionJob: resolve phase: " //$NON-NLS-1$
+							+ (System.currentTimeMillis() - resolveStart) + " ms"); //$NON-NLS-1$
+				}
 			}
 			subMon.checkCanceled();
 			subMon.setWorkRemaining(20);
@@ -142,7 +148,14 @@ public class LoadTargetDefinitionJob extends WorkspaceJob {
 			loadJRE(subMon.split(3));
 
 			PDECore.getDefault().getPreferencesManager().savePluginPreferences();
+			long resetStart = System.currentTimeMillis();
 			resetPlatform(subMon.split(14));
+			if (PDECore.DEBUG_MODEL) {
+				System.out.println("[PERF] LoadTargetDefinitionJob: resetPlatform phase: " //$NON-NLS-1$
+						+ (System.currentTimeMillis() - resetStart) + " ms"); //$NON-NLS-1$
+				System.out.println("[PERF] LoadTargetDefinitionJob: total: " //$NON-NLS-1$
+						+ (System.currentTimeMillis() - jobStart) + " ms"); //$NON-NLS-1$
+			}
 
 		} catch (OperationCanceledException e) {
 			return Status.CANCEL_STATUS;

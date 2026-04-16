@@ -383,6 +383,7 @@ public class TargetDefinition implements ITargetDefinition {
 			if (fIsResolved && fResolutionStatus != null) {
 				return fResolutionStatus;
 			}
+			long resolveStart = System.currentTimeMillis();
 			ITargetLocation[] targetLocations = getTargetLocations();
 			if (targetLocations == null || targetLocations.length == 0) {
 				// if we do not do anything, we can't do anything wrong...
@@ -396,13 +397,19 @@ public class TargetDefinition implements ITargetDefinition {
 				Map<P2TargetUtils, List<ITargetLocation>> synchronizers = new HashMap<>();
 				// clear previous entries for this target only
 				P2TargetUtils.fgTargetArtifactRepo.remove(this);
+				long nonP2Start = System.currentTimeMillis();
 				for (ITargetLocation location : targetLocations) {
 					subMonitor.checkCanceled();
 					subMonitor.subTask(Messages.TargetDefinition_4);
 					P2TargetUtils synchronizer = location.getAdapter(P2TargetUtils.class);
 					if (synchronizer == null) {
 						// a usual target definition location
+						long locStart = System.currentTimeMillis();
 						IStatus s = location.resolve(this, subMonitor.split(100));
+						if (PDECore.DEBUG_MODEL) {
+							System.out.println("[PERF] Non-P2 location resolved in " //$NON-NLS-1$
+									+ (System.currentTimeMillis() - locStart) + " ms: " + location); //$NON-NLS-1$
+						}
 						if (!s.isOK()) {
 							status.add(s);
 						}
@@ -411,14 +418,25 @@ public class TargetDefinition implements ITargetDefinition {
 						synchronizers.computeIfAbsent(synchronizer, nil -> new ArrayList<>()).add(location);
 					}
 				}
+				if (PDECore.DEBUG_MODEL) {
+					System.out.println("[PERF] All non-P2 locations resolved in " //$NON-NLS-1$
+							+ (System.currentTimeMillis() - nonP2Start) + " ms"); //$NON-NLS-1$
+				}
 				if (!synchronizers.isEmpty()) {
 					List<ITargetLocation> delayedLocations = synchronizers.values().stream().flatMap(Collection::stream)
 							.toList();
 					subMonitor.setWorkRemaining(synchronizers.size() * 100 + delayedLocations.size());
+					long p2SyncStart = System.currentTimeMillis();
 					synchronizers.forEach((synchronizer, locations) -> {
 						subMonitor.checkCanceled();
 						try {
+							long syncStart = System.currentTimeMillis();
 							synchronizer.synchronize(this, subMonitor.split(100));
+							if (PDECore.DEBUG_MODEL) {
+								System.out.println("[PERF] P2 synchronizer completed in " //$NON-NLS-1$
+										+ (System.currentTimeMillis() - syncStart) + " ms for " //$NON-NLS-1$
+										+ locations.size() + " locations"); //$NON-NLS-1$
+							}
 							locations.stream().map(ITargetLocation::getStatus).filter(s -> s != null && !s.isOK())
 									.forEach(status::add);
 						} catch (CoreException e) {
@@ -426,6 +444,11 @@ public class TargetDefinition implements ITargetDefinition {
 							status.add(e.getStatus());
 						}
 					});
+					if (PDECore.DEBUG_MODEL) {
+						System.out.println("[PERF] All P2 synchronizers completed in " //$NON-NLS-1$
+								+ (System.currentTimeMillis() - p2SyncStart) + " ms"); //$NON-NLS-1$
+					}
+					long delayedStart = System.currentTimeMillis();
 					for (ITargetLocation location : delayedLocations) {
 						subMonitor.checkCanceled();
 						IStatus s = location.resolve(this, subMonitor.split(1));
@@ -433,6 +456,15 @@ public class TargetDefinition implements ITargetDefinition {
 							status.add(s);
 						}
 					}
+					if (PDECore.DEBUG_MODEL) {
+						System.out.println("[PERF] Delayed P2 locations resolved in " //$NON-NLS-1$
+								+ (System.currentTimeMillis() - delayedStart) + " ms"); //$NON-NLS-1$
+					}
+				}
+				if (PDECore.DEBUG_MODEL) {
+					System.out.println("[PERF] TargetDefinition.resolve() total: " //$NON-NLS-1$
+							+ (System.currentTimeMillis() - resolveStart) + " ms (" //$NON-NLS-1$
+							+ targetLocations.length + " locations)"); //$NON-NLS-1$
 				}
 				if (status.isOK()) {
 					fIsResolved = true;

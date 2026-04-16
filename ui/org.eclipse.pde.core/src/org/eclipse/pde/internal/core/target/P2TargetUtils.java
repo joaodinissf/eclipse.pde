@@ -823,24 +823,40 @@ public class P2TargetUtils {
 	 * @throws CoreException if there was a problem synchronizing
 	 */
 	public synchronized void synchronize(ITargetDefinition target, IProgressMonitor monitor) throws CoreException {
+		long syncStart = System.currentTimeMillis();
 		SubMonitor progress = SubMonitor.convert(monitor, 100);
 		IProfile profile = getProfile();
 		// Happiness if we have a profile and it checks out or if we can load one and it checks out.
 		if (profile == null) {
 			profile = getProfileRegistry().getProfile(getProfileId(target));
 		}
+		long checkStart = System.currentTimeMillis();
 		if (profile != null && checkProfile(target, profile)) {
+			if (PDECore.DEBUG_MODEL) {
+				System.out.println("[PERF] P2TargetUtils.synchronize(): profile valid (checkProfile: " //$NON-NLS-1$
+						+ (System.currentTimeMillis() - checkStart) + " ms, total: " //$NON-NLS-1$
+						+ (System.currentTimeMillis() - syncStart) + " ms)"); //$NON-NLS-1$
+			}
 			// always push the changes to the target because there can be many target objects
 			// for the same synchronizer (doh!)
 			fProfile = profile;
 			notify(target, progress.split(25));
 			return;
 		}
+		if (PDECore.DEBUG_MODEL) {
+			System.out.println("[PERF] P2TargetUtils.synchronize(): profile stale/missing (checkProfile: " //$NON-NLS-1$
+					+ (System.currentTimeMillis() - checkStart) + " ms)"); //$NON-NLS-1$
+		}
 
 		// Either no profile was found or it was stale.  Delete the current profile and recreate.
 		// This keeps the internal agent data clean and does not cost us much.
+		long deleteStart = System.currentTimeMillis();
 		deleteProfile(target.getHandle());
 		profile = createProfile(target);
+		if (PDECore.DEBUG_MODEL) {
+			System.out.println("[PERF] P2TargetUtils.synchronize(): deleteProfile + createProfile: " //$NON-NLS-1$
+					+ (System.currentTimeMillis() - deleteStart) + " ms"); //$NON-NLS-1$
+		}
 
 		if (progress.isCanceled()) {
 			return;
@@ -849,10 +865,16 @@ public class P2TargetUtils {
 
 		try {
 			// Now resolve the profile and refresh the relate IU containers
+			long resolveStart = System.currentTimeMillis();
 			if (getIncludeAllRequired()) {
 				resolveWithPlanner(target, profile, progress.split(60));
 			} else {
 				resolveWithSlicer(target, profile, progress.split(60));
+			}
+			if (PDECore.DEBUG_MODEL) {
+				System.out.println("[PERF] P2TargetUtils.synchronize(): " //$NON-NLS-1$
+						+ (getIncludeAllRequired() ? "resolveWithPlanner" : "resolveWithSlicer") //$NON-NLS-1$ //$NON-NLS-2$
+						+ ": " + (System.currentTimeMillis() - resolveStart) + " ms"); //$NON-NLS-1$ //$NON-NLS-2$
 			}
 			fProfile = profile;
 			// If we are updating a profile then delete the old snapshot on success.
@@ -867,6 +889,10 @@ public class P2TargetUtils {
 				PDECore.log(e2.getStatus());
 			}
 			throw e;
+		}
+		if (PDECore.DEBUG_MODEL) {
+			System.out.println("[PERF] P2TargetUtils.synchronize() total: " //$NON-NLS-1$
+					+ (System.currentTimeMillis() - syncStart) + " ms"); //$NON-NLS-1$
 		}
 	}
 
@@ -1033,6 +1059,7 @@ public class P2TargetUtils {
 	static IQueryable<IInstallableUnit> getQueryableMetadata(Collection<URI> repos, boolean followRepositoryReferences,
 			boolean forceReload,
 			IProgressMonitor monitor) throws CoreException {
+		long methodStart = System.currentTimeMillis();
 		IMetadataRepositoryManager metadataRepositoryManager = getRepoManager();
 		Collection<URI> existing = new LinkedHashSet<>(
 				Arrays.asList(metadataRepositoryManager.getKnownRepositories(IRepositoryManager.REPOSITORIES_ALL)));
@@ -1045,6 +1072,7 @@ public class P2TargetUtils {
 		List<IMetadataRepository> result = new CopyOnWriteArrayList<>();
 		List<IMetadataRepository> additional = new CopyOnWriteArrayList<>();
 		MultiStatus repoStatus = new MultiStatus(PDECore.PLUGIN_ID, 0, Messages.IUBundleContainer_ProblemsLoadingRepositories);
+		long loadStart = System.currentTimeMillis();
 		int threadCount = Math.min(repos.size(), Runtime.getRuntime().availableProcessors());
 		if (threadCount > 1) {
 			// Parallel loading — each repo is loaded in its own thread.
@@ -1058,9 +1086,14 @@ public class P2TargetUtils {
 				List<Future<?>> futures = new ArrayList<>();
 				for (URI location : repos) {
 					futures.add(executor.submit(() -> {
+						long repoStart = System.currentTimeMillis();
 						try {
 							IMetadataRepository repository = metadataRepositoryManager.loadRepository(location,
 									new NullProgressMonitor());
+							if (PDECore.DEBUG_MODEL) {
+								System.out.println("[PERF] loadRepository(" + location + "): " //$NON-NLS-1$ //$NON-NLS-2$
+										+ (System.currentTimeMillis() - repoStart) + " ms"); //$NON-NLS-1$
+							}
 							result.add(repository);
 							if (followRepositoryReferences) {
 								addReferences(repository, additional, seen, metadataRepositoryManager,
@@ -1094,8 +1127,13 @@ public class P2TargetUtils {
 			// Single repo — no thread pool overhead
 			for (URI location : repos) {
 				try {
+					long repoStart = System.currentTimeMillis();
 					IMetadataRepository repository = metadataRepositoryManager.loadRepository(location,
 							subMonitor.split(1));
+					if (PDECore.DEBUG_MODEL) {
+						System.out.println("[PERF] loadRepository(" + location + "): " //$NON-NLS-1$ //$NON-NLS-2$
+								+ (System.currentTimeMillis() - repoStart) + " ms"); //$NON-NLS-1$
+					}
 					result.add(repository);
 					if (followRepositoryReferences) {
 						addReferences(repository, additional, seen, metadataRepositoryManager, subMonitor.split(1));
@@ -1106,6 +1144,11 @@ public class P2TargetUtils {
 			}
 		}
 		subMonitor.setWorkRemaining(forceReload ? repos.size() * 2 : 0);
+		if (PDECore.DEBUG_MODEL) {
+			System.out.println("[PERF] getQueryableMetadata(): loaded " + repos.size() //$NON-NLS-1$
+					+ " repos (" + (threadCount > 1 ? "parallel, " + threadCount + " threads" : "single") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+					+ ") in " + (System.currentTimeMillis() - loadStart) + " ms"); //$NON-NLS-1$ //$NON-NLS-2$
+		}
 		if (result.size() != repos.size()) {
 			throw new CoreException(repoStatus);
 		}
@@ -1148,6 +1191,11 @@ public class P2TargetUtils {
 			}
 			unique = refreshed;
 		}
+		if (PDECore.DEBUG_MODEL) {
+			System.out.println("[PERF] getQueryableMetadata() total: " //$NON-NLS-1$
+					+ (System.currentTimeMillis() - methodStart) + " ms (" //$NON-NLS-1$
+					+ unique.size() + " unique repos, forceReload=" + forceReload + ")"); //$NON-NLS-1$ //$NON-NLS-2$
+		}
 		if (unique.size() == 1) {
 			return unique.iterator().next();
 		}
@@ -1184,10 +1232,16 @@ public class P2TargetUtils {
 	 */
 	private void resolveWithPlanner(ITargetDefinition target, IProfile profile, IProgressMonitor monitor)
 			throws CoreException {
+		long plannerStart = System.currentTimeMillis();
 		SubMonitor subMonitor = SubMonitor.convert(monitor, Messages.IUBundleContainer_0, 220);
 
 		// Get the root IUs for every relevant container in the target definition
+		long rootIUsStart = System.currentTimeMillis();
 		Map<IInstallableUnit, String> units = getRootIUs(target, subMonitor.split(20));
+		if (PDECore.DEBUG_MODEL) {
+			System.out.println("[PERF] resolveWithPlanner(): getRootIUs: " //$NON-NLS-1$
+					+ (System.currentTimeMillis() - rootIUsStart) + " ms (" + units.size() + " IUs)"); //$NON-NLS-1$ //$NON-NLS-2$
+		}
 
 		// create the provisioning plan
 		IPlanner planner = getPlanner();
@@ -1221,7 +1275,12 @@ public class P2TargetUtils {
 		context.setMetadataRepositories(getMetadataRepositories(target).toArray(URI[]::new));
 		context.setArtifactRepositories(getArtifactRepositories(target).toArray(URI[]::new));
 
+		long provPlanStart = System.currentTimeMillis();
 		IProvisioningPlan plan = planner.getProvisioningPlan(request, context, subMonitor.split(20));
+		if (PDECore.DEBUG_MODEL) {
+			System.out.println("[PERF] resolveWithPlanner(): getProvisioningPlan (1st pass): " //$NON-NLS-1$
+					+ (System.currentTimeMillis() - provPlanStart) + " ms"); //$NON-NLS-1$
+		}
 		IStatus status = plan.getStatus();
 		if (!status.isOK()) {
 			throw new CoreException(status);
@@ -1238,7 +1297,12 @@ public class P2TargetUtils {
 		// execute the provisioning plan
 		IPhaseSet phases = createPhaseSet();
 		IEngine engine = getEngine();
+		long engineStart = System.currentTimeMillis();
 		IStatus result = engine.perform(plan, phases, subMonitor.split(100));
+		if (PDECore.DEBUG_MODEL) {
+			System.out.println("[PERF] resolveWithPlanner(): engine.perform (1st pass): " //$NON-NLS-1$
+					+ (System.currentTimeMillis() - engineStart) + " ms"); //$NON-NLS-1$
+		}
 		if (result.getSeverity() == IStatus.ERROR || result.getSeverity() == IStatus.CANCEL) {
 			throw new CoreException(result);
 		}
@@ -1246,7 +1310,12 @@ public class P2TargetUtils {
 		// Now that we have a plan with all the binary and explicit bundles, do a second pass and add
 		// in all the source.
 		try {
+			long sourceStart = System.currentTimeMillis();
 			planInSourceBundles(profile, context, subMonitor.split(60));
+			if (PDECore.DEBUG_MODEL) {
+				System.out.println("[PERF] resolveWithPlanner(): planInSourceBundles (2nd pass): " //$NON-NLS-1$
+						+ (System.currentTimeMillis() - sourceStart) + " ms"); //$NON-NLS-1$
+			}
 		} catch (CoreException e) {
 			// XXX Review required: is adding in the source critical or optional?
 			// We failed adding in the source so remove the intermediate profile and rethrow
@@ -1256,6 +1325,10 @@ public class P2TargetUtils {
 				PDECore.log(e2.getStatus());
 			}
 			throw e;
+		}
+		if (PDECore.DEBUG_MODEL) {
+			System.out.println("[PERF] resolveWithPlanner() total: " //$NON-NLS-1$
+					+ (System.currentTimeMillis() - plannerStart) + " ms"); //$NON-NLS-1$
 		}
 	}
 
