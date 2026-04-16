@@ -668,6 +668,8 @@ public class TargetEditor extends FormEditor {
 		private TargetLocationsGroup fLocationTree;
 		private TargetContentsGroup fContentTree;
 		private final Object fJobFamily = new Object();
+		/** Guard against re-entrant calls from UI tree updates */
+		private boolean fUpdating = false;
 
 		public void setLocationTree(TargetLocationsGroup locationTree) {
 			fLocationTree = locationTree;
@@ -686,22 +688,30 @@ public class TargetEditor extends FormEditor {
 
 		@Override
 		public void contentsChanged(ITargetDefinition definition, Object source, boolean resolve, boolean forceResolve) {
+			if (fUpdating) {
+				return; // prevent re-entrant calls from setInput() triggering resolve
+			}
 			if (!forceResolve && (!resolve || definition.isResolved())) {
-				if (fContentTree != null && source != fContentTree) {
-					ITargetDefinition target = getTarget();
-					// Check to see if we are resolved, resolving, or cancelled
-					if (target != null && target.isResolved()) {
-						fContentTree.setInput(getTarget());
-						statePage.updateTarget(getTarget());
-					} else if (Job.getJobManager().find(getJobFamily()).length > 0) {
-						fContentTree.setInput(null);
-					} else {
-						fContentTree.setCancelled();
-					}
+				fUpdating = true;
+				try {
+					if (fContentTree != null && source != fContentTree) {
+						ITargetDefinition target = getTarget();
+						// Check to see if we are resolved, resolving, or cancelled
+						if (target != null && target.isResolved()) {
+							fContentTree.setInput(getTarget());
+							statePage.updateTarget(getTarget());
+						} else if (Job.getJobManager().find(getJobFamily()).length > 0) {
+							fContentTree.setInput(null);
+						} else {
+							fContentTree.setCancelled();
+						}
 
-				}
-				if (fLocationTree != null && source != fLocationTree) {
-					fLocationTree.setInput(getTarget());
+					}
+					if (fLocationTree != null && source != fLocationTree) {
+						fLocationTree.setInput(getTarget());
+					}
+				} finally {
+					fUpdating = false;
 				}
 			} else {
 				if (fContentTree != null) {

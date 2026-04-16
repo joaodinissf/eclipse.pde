@@ -365,6 +365,13 @@ public class TargetDefinition implements ITargetDefinition {
 	@Override
 	public IStatus resolve(IProgressMonitor monitor) {
 		synchronized (fResolveLock) {
+			// Skip resolution if already resolved — avoids redundant work when
+			// the UI repeatedly refreshes an unchanged target. Callers that need
+			// to force re-resolution must call markUnresolved(), setTargetLocations(),
+			// or flushCaches() first.
+			if (fIsResolved && fResolutionStatus != null) {
+				return fResolutionStatus;
+			}
 			ITargetLocation[] targetLocations = getTargetLocations();
 			if (targetLocations == null || targetLocations.length == 0) {
 				// if we do not do anything, we can't do anything wrong...
