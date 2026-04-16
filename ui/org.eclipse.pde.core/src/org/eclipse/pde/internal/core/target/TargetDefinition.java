@@ -362,6 +362,16 @@ public class TargetDefinition implements ITargetDefinition {
 		}
 	}
 
+	/**
+	 * Invalidates the cached resolution so that the next call to
+	 * {@link #resolve(IProgressMonitor)} actually re-resolves the target.
+	 * Called by {@link P2TargetUtils#forceCheckTarget(ITargetDefinition)}.
+	 */
+	void markUnresolved() {
+		fIsResolved = false;
+		fResolutionStatus = null;
+	}
+
 	@Override
 	public IStatus resolve(IProgressMonitor monitor) {
 		synchronized (fResolveLock) {

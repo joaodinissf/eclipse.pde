@@ -314,6 +314,10 @@ public class P2TargetUtils {
 	public static void forceCheckTarget(final ITargetDefinition target) {
 		final P2TargetUtils result = getSynchronizer(target);
 		result.resetProfile();
+		// Invalidate the target's cached resolution so resolve() actually runs
+		if (target instanceof TargetDefinition td) {
+			td.markUnresolved();
+		}
 	}
 
 	private synchronized void resetProfile() {
