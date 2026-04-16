@@ -165,13 +165,24 @@ public class PluginModelManager implements IModelProviderListener {
 	 */
 	@Override
 	public void modelsChanged(IModelProviderEvent e) {
+		PluginModelDelta delta;
+		StateDelta stateDelta;
 		synchronized (fEntriesSynchronizer) {
-			modelsChangedSynchronized(e);
+			Object[] result = modelsChangedSynchronized(e);
+			delta = (PluginModelDelta) result[0];
+			stateDelta = (StateDelta) result[1];
 		}
+		// Fire events OUTSIDE the lock to prevent deadlocks when listeners
+		// re-enter the model manager
+		if (stateDelta != null) {
+			fireStateDelta(stateDelta);
+		}
+		fireDelta(delta);
 	}
 
-	private void modelsChangedSynchronized(IModelProviderEvent e) {
+	private Object[] modelsChangedSynchronized(IModelProviderEvent e) {
 		PluginModelDelta delta = new PluginModelDelta();
+		StateDelta stateDelta = null;
 
 		// Removes from the master table and the state all workspace plug-ins that have been
 		// removed (project closed/deleted) from the workspace.
@@ -217,7 +228,6 @@ public class PluginModelManager implements IModelProviderListener {
 		if (fState != null) {
 			// if the target location has not changed, incrementally re-resolve the state after processing all the add/remove/modify changes
 			// Otherwise, the state is in a good resolved state
-			StateDelta stateDelta = null;
 			if (addedBSNs.isEmpty()) {
 				// resolve incrementally
 				stateDelta = fState.resolveState(true);
@@ -228,12 +238,9 @@ public class PluginModelManager implements IModelProviderListener {
 			// trigger a classpath update for all workspace plug-ins affected by the
 			// processed batch of changes, run asynch for manifest changes
 			updateAffectedEntries(stateDelta);
-			fireStateDelta(stateDelta);
-
 		}
 
-		// notify all interested listeners in the changes made to the master table of entries
-		fireDelta(delta);
+		return new Object[] { delta, stateDelta };
 	}
 
 	/**
@@ -419,9 +426,15 @@ public class PluginModelManager implements IModelProviderListener {
 	 * Clears all existing models and recreates them
 	 */
 	public void targetReloaded(IProgressMonitor monitor) {
+		PDEState pendingStateChange = null;
 		synchronized (fEntriesSynchronizer) {
 			fEntries = null;
-			initializeTable(monitor);
+			pendingStateChange = initializeTable(monitor);
+		}
+		// Fire events OUTSIDE the lock to prevent deadlocks when listeners
+		// re-enter the model manager (e.g. OSGiAnnotationsClasspathContributor)
+		if (pendingStateChange != null) {
+			fireStateChanged(pendingStateChange);
 		}
 	}
 
@@ -433,20 +446,36 @@ public class PluginModelManager implements IModelProviderListener {
 	 * This way there are no partial reads.
 	 */
 	private Map<String, LocalModelEntry> getEntryTable() {
-		initializeTable(null);
+		PDEState pendingStateChange = null;
+		synchronized (fEntriesSynchronizer) {
+			pendingStateChange = initializeTable(null);
+		}
+		if (pendingStateChange != null) {
+			fireStateChanged(pendingStateChange);
+		}
 		return fEntries;
 	}
 
 	void initialize(IProgressMonitor monitor) {
+		PDEState pendingStateChange = null;
 		synchronized (fEntriesSynchronizer) {
-			initializeTable(monitor);
+			pendingStateChange = initializeTable(monitor);
+		}
+		if (pendingStateChange != null) {
+			fireStateChanged(pendingStateChange);
 		}
 	}
 
-	/** Has to be called synchronized with fEntriesSynchronizer **/
-	private void initializeTable(IProgressMonitor monitor) {
+	/**
+	 * Has to be called synchronized with fEntriesSynchronizer.
+	 *
+	 * @return the PDEState to fire via {@link #fireStateChanged}, or
+	 *         {@code null} if no event is needed. The caller MUST fire the
+	 *         event <b>outside</b> the synchronized block.
+	 */
+	private PDEState initializeTable(IProgressMonitor monitor) {
 		if (fEntries != null) {
-			return;
+			return null;
 		}
 
 		SubMonitor subMon = SubMonitor.convert(monitor, PDECoreMessages.PluginModelManager_InitializingPluginModels, 100);
@@ -478,7 +507,7 @@ public class PluginModelManager implements IModelProviderListener {
 			fExternalManager.setModels(new IPluginModelBase[0]);
 			fEntries = entries;
 			LoadTargetDefinitionJob.load(unresolvedRepoBasedtarget);
-			return;
+			return null;
 		}
 
 		long startTargetModels = System.currentTimeMillis();
@@ -534,9 +563,10 @@ public class PluginModelManager implements IModelProviderListener {
 			updateAffectedEntries(null);
 		}
 
-		// Fire a state change event to touch all projects if the target content has changed since last model init
+		PDEState pendingStateChange = null;
+		// Defer state change event — caller fires it outside the lock
 		if (externalPluginsChanged) {
-			fireStateChanged(fState);
+			pendingStateChange = fState;
 			if (PDECore.DEBUG_MODEL) {
 				System.out.println("Loaded target models differ from saved list, PDE builder will run on all projects."); //$NON-NLS-1$
 			}
@@ -547,7 +577,7 @@ public class PluginModelManager implements IModelProviderListener {
 			long time = System.currentTimeMillis() - startTime;
 			System.out.println("PDE plug-in model initialization complete: " + time + " ms"); //$NON-NLS-1$//$NON-NLS-2$
 		}
-
+		return pendingStateChange;
 	}
 
 	/**
