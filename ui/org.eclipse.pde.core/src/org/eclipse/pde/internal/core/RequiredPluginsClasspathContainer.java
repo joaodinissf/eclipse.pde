@@ -110,6 +110,15 @@ class RequiredPluginsClasspathContainer {
 	private IClasspathEntry[] fEntries;
 	private boolean addImportedPackages;
 
+	/**
+	 * Classpath contributors materialized once per {@link #computeEntries()}
+	 * pass. {@link #getClasspathContributors()} concatenates the cached
+	 * extension list with a fresh stream from PDECore on every call, and it is
+	 * queried once per added plug-in; snapshotting it here avoids rebuilding
+	 * that stream for every dependency of a project.
+	 */
+	private List<IClasspathContributor> fComputeContributors;
+
 	private static final boolean ADD_TRANSITIVE_DEPENDENCIES_WITH_FORBIDDEN_ACCESS = Boolean
 			.parseBoolean(System.getProperty("pde.addTransitiveDependenciesWithForbiddenAccess", "true")); //$NON-NLS-1$ //$NON-NLS-2$
 
@@ -231,9 +240,13 @@ class RequiredPluginsClasspathContainer {
 
 			Map<BundleDescription, LinkedHashSet<Rule>> map = retrieveVisiblePackagesFromState(desc);
 
+			// Materialize the classpath contributors once for this pass; they
+			// are reused below and for every added plug-in (see addPlugin).
+			fComputeContributors = getClasspathContributors().toList();
+
 			// Add any library entries contributed via classpath contributor
 			// extension (Bug 363733)
-			getClasspathContributors().map(cc -> cc.getInitialEntries(desc))
+			fComputeContributors.stream().map(cc -> cc.getInitialEntries(desc))
 					.flatMap(Collection::stream).forEach(entries::add);
 
 			Set<BundleDescription> added = new HashSet<>();
@@ -289,7 +302,7 @@ class RequiredPluginsClasspathContainer {
 
 			// Add any additional library entries contributed via classpath
 			// contributor
-			entries.addAll(getClasspathContributors().filter(IClasspathContributor2.class::isInstance)
+			entries.addAll(fComputeContributors.stream().filter(IClasspathContributor2.class::isInstance)
 					.map(IClasspathContributor2.class::cast).flatMap(cc -> cc.getAdditionalEntries(desc)).toList());
 
 		return entries;
@@ -462,7 +475,7 @@ class RequiredPluginsClasspathContainer {
 
 		// Add any library entries contributed via classpath contributor
 		// extension (Bug 363733)
-		getClasspathContributors().map(cc -> cc.getEntriesForDependency(hostBundle, desc)).flatMap(Collection::stream)
+		fComputeContributors.stream().map(cc -> cc.getEntriesForDependency(hostBundle, desc)).flatMap(Collection::stream)
 				.forEach(entries::add);
 		if (resource != null) {
 			PDEClasspathContainer.addProjectEntry(resource.getProject(), rules,
