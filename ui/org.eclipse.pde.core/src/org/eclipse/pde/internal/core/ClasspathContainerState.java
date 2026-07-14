@@ -284,9 +284,11 @@ public class ClasspathContainerState {
 
 		/**
 		 * Merges the request with a pending request for the same project, if
-		 * any. A request without a saved container state forces a container
-		 * update and therefore wins over requests whose update may be skipped
-		 * when the computed entries match the saved state.
+		 * any. A request without an attached container snapshot (the hot path,
+		 * e.g. a target reload) is compared against the classpath state
+		 * persisted on disk when the job runs, which is the most up-to-date
+		 * reference; it therefore wins over a request that carries an already
+		 * captured snapshot.
 		 */
 		private void enqueue(UpdateRequest request) {
 			workQueue.merge(request.project(), request,
@@ -316,11 +318,18 @@ public class ClasspathContainerState {
 	private static boolean isUpToDate(IProject project, IClasspathEntry[] currentEntries,
 			IClasspathContainer previousClasspathContainer) {
 		if (previousClasspathContainer == null) {
+			// Hot-path requests (e.g. a target reload) carry no container
+			// snapshot. Rather than forcing an update, compare the computed
+			// entries against the classpath state persisted on disk. readState
+			// returns a non-null empty container on a miss, so a project
+			// without saved state still reports "needs update" and is
+			// refreshed on first run.
+			previousClasspathContainer = readState(project);
 			if (PDECore.DEBUG_STATE) {
 				PDECore.TRACE.trace(PDECore.KEY_DEBUG_STATE,
-						String.format("%s need update because it has no state to compare", project.getName())); //$NON-NLS-1$
+						String.format("%s has no in-memory state, comparing against persisted state", //$NON-NLS-1$
+								project.getName()));
 			}
-			return false;
 		}
 		IClasspathEntry[] previousEntries = previousClasspathContainer.getClasspathEntries();
 		if (previousEntries == null || previousEntries.length != currentEntries.length) {
