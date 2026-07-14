@@ -765,6 +765,33 @@ public class ClasspathResolutionTest2 {
 		.containsExactlyInAnyOrderElementsOf(originalNames);
 	}
 
+	/**
+	 * Classpath computation must produce a stable entry <em>order</em>, not just
+	 * a stable set. Recomputing the container must yield the exact same ordered
+	 * list of entries.
+	 * <p>
+	 * This guards {@code ClasspathContainerState.isUpToDate()}, which compares
+	 * entries position by position: a nondeterministic ordering of an otherwise
+	 * unchanged dependency set would make every reload look like a change and
+	 * apply a fresh JDT classpath container, causing spurious churn. Unlike
+	 * {@link #testClasspathComputationIsDeterministic()} (which sorts and
+	 * compares as a set), this asserts exact positional equality of the full
+	 * entry arrays.
+	 */
+	@Test
+	public void testClasspathEntryOrderIsStable() throws Exception {
+		IPluginModelBase model = PDECore.getDefault().getModelManager().findModel(projectA);
+		assertNotNull("PDE model for project A must be available", model);
+
+		IClasspathEntry[] firstEntries = ClasspathComputer.computeClasspathEntries(model, projectA);
+		IClasspathEntry[] secondEntries = ClasspathComputer.computeClasspathEntries(model, projectA);
+
+		assertThat(secondEntries)
+				.as("Recomputed classpath entries must be identical in order and content, "
+						+ "otherwise isUpToDate() sees spurious changes and forces a JDT container update")
+				.containsExactly(firstEntries);
+	}
+
 	// =========================================================================
 	// Section 7: Cyclic capability resolution for fragments
 	// =========================================================================
