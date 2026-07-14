@@ -143,7 +143,6 @@ public class ClasspathContainerState {
 							updateMonitor.worked(1);
 							if (!isUpToDate(project, entries, req.container())) {
 								updateProjects.put(javaProject, PDEClasspathContainerSaveHelper.containerOf(entries));
-								saveState(project, entries);
 							} else {
 								updateMonitor.worked(1);
 							}
@@ -187,6 +186,12 @@ public class ClasspathContainerState {
 					long applyNanos = PDECore.DEBUG_CLASSPATH ? System.nanoTime() : 0;
 					setProjectContainers(javaProjects, container, monitor.split(n));
 					traceRuntime("Applied classpath container of %2$d project(s) in %1$d ms.", applyNanos, n); //$NON-NLS-1$
+					// Persist the classpath state only after JDT actually
+					// applied it, so the saved state on disk never leads the
+					// live JDT container (e.g. after a crash between the two).
+					for (int j = 0; j < n; j++) {
+						saveState(javaProjects[j].getProject(), container[j].getClasspathEntries());
+					}
 				} catch (JavaModelException e) {
 					return e.getStatus();
 				}
