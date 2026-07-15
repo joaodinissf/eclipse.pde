@@ -34,6 +34,8 @@ import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Stream;
 
 import org.eclipse.core.resources.IFile;
@@ -53,6 +55,7 @@ import org.eclipse.osgi.service.resolver.BundleSpecification;
 import org.eclipse.osgi.service.resolver.ExportPackageDescription;
 import org.eclipse.osgi.service.resolver.HostSpecification;
 import org.eclipse.osgi.service.resolver.ImportPackageSpecification;
+import org.eclipse.osgi.service.resolver.State;
 import org.eclipse.osgi.service.resolver.StateHelper;
 import org.eclipse.pde.core.IClasspathContributor;
 import org.eclipse.pde.core.IClasspathContributor2;
@@ -705,16 +708,99 @@ class RequiredPluginsClasspathContainer {
 			List<IClasspathEntry> entries) throws CoreException {
 		Collection<BundleDescription> closure = ClasspathComputer.collectBuildRelevantDependencies(added);
 		String systemBundleBSN = TargetPlatformHelper.getPDEState().getSystemBundle();
+		// The library/project entries for a transitive-forbidden dependency
+		// depend only on the target bundle and the resolver state (the inclusion
+		// rules are consumer-independent here), so they can be shared across all
+		// consumer projects. Cache them per state; addTransitiveEntry falls back
+		// to direct construction when the cache is not applicable.
+		ConcurrentMap<BundleDescription, List<IClasspathEntry>> cache = transitiveEntryCache();
 		Iterator<BundleDescription> transitiveDeps = closure.stream()
 				.filter(desc -> !desc.getSymbolicName().equals(systemBundleBSN))
 				.sorted(SYMBOLIC_NAME_THEN_HIGHER_VERSION).iterator();
 		while (transitiveDeps.hasNext()) {
 			BundleDescription desc = transitiveDeps.next();
 			if (added.add(desc)) {
-				Map<BundleDescription, LinkedHashSet<Rule>> rules = Map.of(desc, new LinkedHashSet<>());
-				addPlugin(desc, true, rules, entries);
+				addTransitiveEntry(desc, cache, entries);
 			}
 		}
+	}
+
+	/**
+	 * Adds the classpath entries for a single transitive-forbidden dependency.
+	 * The classpath-contributor entries depend on the requesting (host) bundle
+	 * and are always computed fresh; the library/project entries depend only on
+	 * the target bundle and are served from (and stored in) the per-state cache
+	 * when one is supplied.
+	 */
+	private void addTransitiveEntry(BundleDescription desc,
+			ConcurrentMap<BundleDescription, List<IClasspathEntry>> cache, List<IClasspathEntry> entries)
+			throws CoreException {
+		IPluginModelBase model = PluginRegistry.findModel((Resource) desc);
+		if (model == null || !model.isEnabled()) {
+			return;
+		}
+		BundleDescription hostBundle = fModel.getBundleDescription();
+		fComputeContributors.stream().map(cc -> cc.getEntriesForDependency(hostBundle, desc))
+				.flatMap(Collection::stream).forEach(entries::add);
+		List<IClasspathEntry> cached = cache != null ? cache.get(desc) : null;
+		if (cached == null) {
+			List<IClasspathEntry> produced = new ArrayList<>(2);
+			List<Rule> rules = getInclusions(Map.of(desc, new LinkedHashSet<>()), model);
+			IResource resource = model.getUnderlyingResource();
+			if (resource != null) {
+				PDEClasspathContainer.addProjectEntry(resource.getProject(), rules,
+						model.getPluginBase().exportsExternalAnnotations(), produced);
+			} else {
+				PDEClasspathContainer.addExternalPlugin(model, rules, produced);
+			}
+			cached = List.copyOf(produced);
+			if (cache != null) {
+				cache.put(desc, cached);
+			}
+		}
+		entries.addAll(cached);
+	}
+
+	/**
+	 * The per-state cache of transitive-forbidden entries, or {@code null} when
+	 * caching is not applicable. Caching is only sound when the inclusion rules
+	 * for a transitive dependency are consumer-independent, i.e. the same
+	 * conditions under which {@link #getInclusions} applies restrictions: a
+	 * bundle project, restriction enabled, target &ge; 3.1.
+	 */
+	private ConcurrentMap<BundleDescription, List<IClasspathEntry>> transitiveEntryCache() {
+		BundleDescription self = fModel.getBundleDescription();
+		if (self == null || !(fModel instanceof IBundlePluginModelBase)
+				|| "false".equals(System.getProperty("pde.restriction")) //$NON-NLS-1$ //$NON-NLS-2$
+				|| TargetPlatformHelper.getTargetVersion() < 3.1) {
+			return null;
+		}
+		State state = self.getContainingState();
+		return state != null ? scopedTransitiveEntries(state) : null;
+	}
+
+	/**
+	 * A single-slot cache keyed by resolver-state identity and timestamp. A
+	 * re-resolve bumps {@link State#getTimeStamp()}, which replaces the slot so
+	 * stale entries are never served and the cache does not grow across states.
+	 */
+	private record TransitiveEntryScope(State state, long timeStamp,
+			ConcurrentMap<BundleDescription, List<IClasspathEntry>> entries) {
+		boolean matches(State other) {
+			return state == other && timeStamp == other.getTimeStamp();
+		}
+	}
+
+	private static volatile TransitiveEntryScope transitiveScope;
+
+	private static synchronized ConcurrentMap<BundleDescription, List<IClasspathEntry>> scopedTransitiveEntries(
+			State state) {
+		TransitiveEntryScope scope = transitiveScope;
+		if (scope == null || !scope.matches(state)) {
+			scope = new TransitiveEntryScope(state, state.getTimeStamp(), new ConcurrentHashMap<>());
+			transitiveScope = scope;
+		}
+		return scope.entries();
 	}
 
 	private void addExtraModel(BundleDescription desc, Set<BundleDescription> added, List<IClasspathEntry> entries,
