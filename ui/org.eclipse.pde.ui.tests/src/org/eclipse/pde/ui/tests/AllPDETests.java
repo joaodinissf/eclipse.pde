@@ -19,6 +19,7 @@ import org.eclipse.pde.core.tests.internal.classpath.ClasspathResolutionTest;
 import org.eclipse.pde.core.tests.internal.classpath.ClasspathResolutionTest2;
 import org.eclipse.pde.core.tests.internal.classpath.CyclicReexportClasspathTest;
 import org.eclipse.pde.core.tests.internal.core.builders.BundleErrorReporterTest;
+import org.eclipse.pde.core.tests.internal.util.ManifestUtilsTest;
 import org.eclipse.pde.core.tests.internal.util.PDESchemaHelperTest;
 import org.eclipse.pde.core.tests.internal.util.VMUtilTest;
 import org.eclipse.pde.ui.tests.build.properties.AllValidatorTests;
@@ -70,6 +71,7 @@ import org.junit.platform.suite.api.Suite;
 	ClasspathUpdaterTest.class, //
 	PDESchemaHelperTest.class, //
 	VMUtilTest.class, //
+	ManifestUtilsTest.class, //
 	ClasspathContributorTest.class, //
 	DynamicPluginProjectReferencesTest.class, //
 	ClasspathResolutionTest.class, //

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2006, 2024 IBM Corporation and others.
+ * Copyright (c) 2006, 2026 IBM Corporation and others.
  *
  * This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License 2.0
@@ -17,6 +17,7 @@ package org.eclipse.pde.internal.core.util;
 import static org.osgi.framework.namespace.ExecutionEnvironmentNamespace.CAPABILITY_VERSION_ATTRIBUTE;
 import static org.osgi.framework.namespace.ExecutionEnvironmentNamespace.EXECUTION_ENVIRONMENT_NAMESPACE;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -29,6 +30,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.jar.Attributes;
@@ -110,10 +112,10 @@ public class ManifestUtils {
 	 * OSGi is not running to load manifest information for a bundle.
 	 * </p>
 	 * <p>
-	 * TODO This method may be removed in favour of one that caches manifest
-	 * contents. Currently caching is not worthwhile as calling
-	 * <code>ManifestElement.parseManifest()</code> takes trivial time (under 1ms)
-	 * on repeat calls to the same file.
+	 * The manifest bytes of an archive are cached, so repeated calls for an
+	 * unchanged archive do not open it again; opening it, not parsing the
+	 * manifest, is the expensive part. The bytes are parsed on every call, so
+	 * callers may modify the returned map.
 	 * </p>
 	 *
 	 * @param bundleLocation
@@ -127,24 +129,13 @@ public class ManifestUtils {
 		// Check if the file is a archive or a directory
 		try {
 			if (bundleLocation.isFile()) {
-				ZipFile jarFile = null;
-				InputStream stream = null;
-				try {
-					jarFile = new ZipFile(bundleLocation, ZipFile.OPEN_READ);
-					// Check the manifest.MF
-					ZipEntry manifestEntry = jarFile.getEntry(JarFile.MANIFEST_NAME);
-					if (manifestEntry != null) {
-						stream = jarFile.getInputStream(manifestEntry);
-						if (stream != null) {
-							Map<String, String> map = ManifestElement.parseBundleManifest(stream, null);
-							// Symbolic name is the only required manifest entry, this is an ok bundle
-							if (map != null && map.containsKey(Constants.BUNDLE_SYMBOLICNAME)) {
-								return map;
-							}
-						}
+				byte[] manifest = getArchiveManifest(bundleLocation);
+				if (manifest != null) {
+					Map<String, String> map = ManifestElement.parseBundleManifest(new ByteArrayInputStream(manifest), null);
+					// Symbolic name is the only required manifest entry, this is an ok bundle
+					if (map != null && map.containsKey(Constants.BUNDLE_SYMBOLICNAME)) {
+						return map;
 					}
-				} finally {
-					closeZipFileAndStream(stream, jarFile);
 				}
 			} else {
 				// Check the manifest.MF
@@ -166,6 +157,41 @@ public class ManifestUtils {
 
 		} catch (BundleException | IOException e) {
 			throw new CoreException(Status.error(  NLS.bind(UtilMessages.ErrorReadingManifest, bundleLocation.getAbsolutePath()), e));
+		}
+	}
+
+	/**
+	 * Manifest bytes per archive path, stored with the archive's length and
+	 * modification time so that an archive replaced in place is read again. A
+	 * {@code null} manifest records an archive without one.
+	 */
+	private static final Map<String, ArchiveManifest> ARCHIVE_MANIFESTS = new ConcurrentHashMap<>();
+
+	private record ArchiveManifest(long length, long lastModified, byte[] manifest) {
+	}
+
+	private static byte[] getArchiveManifest(File archive) throws IOException {
+		String path = archive.getAbsolutePath();
+		long length = archive.length();
+		long lastModified = archive.lastModified();
+		ArchiveManifest cached = ARCHIVE_MANIFESTS.get(path);
+		if (cached != null && cached.length() == length && cached.lastModified() == lastModified) {
+			return cached.manifest();
+		}
+		byte[] manifest = readArchiveManifest(archive);
+		ARCHIVE_MANIFESTS.put(path, new ArchiveManifest(length, lastModified, manifest));
+		return manifest;
+	}
+
+	private static byte[] readArchiveManifest(File archive) throws IOException {
+		try (ZipFile zipFile = new ZipFile(archive, ZipFile.OPEN_READ)) {
+			ZipEntry manifestEntry = zipFile.getEntry(JarFile.MANIFEST_NAME);
+			if (manifestEntry == null) {
+				return null;
+			}
+			try (InputStream stream = zipFile.getInputStream(manifestEntry)) {
+				return stream == null ? null : stream.readAllBytes();
+			}
 		}
 	}
 
@@ -266,26 +292,6 @@ public class ManifestUtils {
 			return model.getBuild();
 		}
 		return null;
-	}
-
-	/**
-	 * Closes the stream and file
-	 */
-	private static void closeZipFileAndStream(InputStream stream, ZipFile jarFile) {
-		try {
-			if (stream != null) {
-				stream.close();
-			}
-		} catch (IOException e) {
-			PDECore.log(e);
-		}
-		try {
-			if (jarFile != null) {
-				jarFile.close();
-			}
-		} catch (IOException e) {
-			PDECore.log(e);
-		}
 	}
 
 	private static void writeEntry(Writer out, String key, String value) throws IOException {
