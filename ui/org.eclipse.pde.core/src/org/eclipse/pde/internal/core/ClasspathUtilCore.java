@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2000, 2024 IBM Corporation and others.
+ * Copyright (c) 2000, 2026 IBM Corporation and others.
  *
  * This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License 2.0
@@ -21,8 +21,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 import org.eclipse.core.resources.IResource;
@@ -35,6 +38,7 @@ import org.eclipse.jdt.core.IClasspathEntry;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.osgi.service.resolver.BundleDescription;
+import org.eclipse.osgi.service.resolver.State;
 import org.eclipse.pde.core.build.IBuild;
 import org.eclipse.pde.core.build.IBuildModel;
 import org.eclipse.pde.core.plugin.IFragment;
@@ -59,6 +63,16 @@ import org.osgi.framework.wiring.BundleWiring;
 import org.osgi.resource.Resource;
 
 public class ClasspathUtilCore {
+
+	private record SourceAnnotationKey(String installLocation, String libraryName, boolean isJarShape) {
+	}
+
+	/** Source attachments computed for one resolver state and source locations preference. */
+	private record SourceAnnotations(State state, long stateTimeStamp, String userLocations,
+			Map<SourceAnnotationKey, Optional<IPath>> values) {
+	}
+
+	private static final AtomicReference<SourceAnnotations> fSourceAnnotations = new AtomicReference<>();
 
 	public static void addLibraries(IPluginModelBase model, ArrayList<IClasspathEntry> result) {
 
@@ -314,7 +328,58 @@ public class ClasspathUtilCore {
 		return getSourceAnnotation(model, libraryName, false);
 	}
 
+	/**
+	 * Returns the source attachment for a library of a plug-in. For external
+	 * plug-ins the result is cached: it does not depend on the project whose
+	 * classpath is being computed, so it is computed once per resolver state
+	 * and value of the source locations preference instead of once per
+	 * consuming project. Within that scope a source archive that appears later
+	 * is found only after {@link #resetSourceAnnotations()}.
+	 */
 	public static IPath getSourceAnnotation(IPluginModelBase model, String libraryName, boolean isJarShape) {
+		if (model.getUnderlyingResource() != null) {
+			return computeSourceAnnotation(model, libraryName, isJarShape);
+		}
+		SourceAnnotations annotations = currentSourceAnnotations();
+		SourceAnnotationKey key = new SourceAnnotationKey(model.getInstallLocation(), libraryName, isJarShape);
+		Optional<IPath> annotation = annotations.values().get(key);
+		if (annotation == null) {
+			annotation = Optional.ofNullable(computeSourceAnnotation(model, libraryName, isJarShape));
+			Optional<IPath> concurrent = annotations.values().putIfAbsent(key, annotation);
+			if (concurrent != null) {
+				annotation = concurrent;
+			}
+		}
+		return annotation.orElse(null);
+	}
+
+	/**
+	 * Forgets all cached source attachments, so that they are looked up again
+	 * on the next classpath computation.
+	 */
+	public static void resetSourceAnnotations() {
+		fSourceAnnotations.set(null);
+	}
+
+	@SuppressWarnings("deprecation")
+	private static SourceAnnotations currentSourceAnnotations() {
+		State state = TargetPlatformHelper.getState();
+		long stateTimeStamp = state.getTimeStamp();
+		String userLocations = PDECore.getDefault().getPreferencesManager().getString(ICoreConstants.P_SOURCE_LOCATIONS);
+		SourceAnnotations current = fSourceAnnotations.get();
+		while (current == null || current.state() != state || current.stateTimeStamp() != stateTimeStamp
+				|| !current.userLocations().equals(userLocations)) {
+			SourceAnnotations fresh = new SourceAnnotations(state, stateTimeStamp, userLocations,
+					new ConcurrentHashMap<>());
+			if (fSourceAnnotations.compareAndSet(current, fresh)) {
+				return fresh;
+			}
+			current = fSourceAnnotations.get();
+		}
+		return current;
+	}
+
+	private static IPath computeSourceAnnotation(IPluginModelBase model, String libraryName, boolean isJarShape) {
 		String newlibraryName = TargetWeaver.getWeavedSourceLibraryName(model, libraryName);
 		String zipName = getSourceZipName(newlibraryName);
 		IPath path = getPath(model, zipName, isJarShape);

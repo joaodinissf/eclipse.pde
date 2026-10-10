@@ -18,6 +18,7 @@ import org.eclipse.pde.core.tests.internal.classpath.ChainedReexportClasspathTes
 import org.eclipse.pde.core.tests.internal.classpath.ClasspathResolutionTest;
 import org.eclipse.pde.core.tests.internal.classpath.ClasspathResolutionTest2;
 import org.eclipse.pde.core.tests.internal.classpath.CyclicReexportClasspathTest;
+import org.eclipse.pde.core.tests.internal.classpath.SourceAnnotationCacheTest;
 import org.eclipse.pde.core.tests.internal.core.builders.BundleErrorReporterTest;
 import org.eclipse.pde.core.tests.internal.util.PDESchemaHelperTest;
 import org.eclipse.pde.core.tests.internal.util.VMUtilTest;
@@ -74,6 +75,7 @@ import org.junit.platform.suite.api.Suite;
 	DynamicPluginProjectReferencesTest.class, //
 	ClasspathResolutionTest.class, //
 	ClasspathResolutionTest2.class, //
+	SourceAnnotationCacheTest.class, //
 	BundleErrorReporterTest.class, //
 	AllPDECoreTests.class, //
 	ProjectSmartImportTest.class, //
